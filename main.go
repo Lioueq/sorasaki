@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	xdraw "golang.org/x/image/draw"
@@ -38,20 +39,37 @@ func main() {
 		paths[i], paths[j] = paths[j], paths[i]
 	})
 
+	var wg sync.WaitGroup
+	errCh := make(chan error, len(paths))
+
 	for i, path := range paths {
-		file, err := os.Open(path)
+		wg.Add(1)
+		go func(path string, r image.Rectangle) {
+			defer wg.Done()
+
+			file, err := os.Open(path)
+			if err != nil {
+				errCh <- err
+				return
+			}
+
+			src, err := decodeImage(file)
+			file.Close()
+			if err != nil {
+				errCh <- err
+				return
+			}
+
+			xdraw.CatmullRom.Scale(dst, r, src, src.Bounds(), draw.Over, nil)
+		}(path, rects[i])
+	}
+
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
 		if err != nil {
 			panic(err)
 		}
-
-		src, err := decodeImage(file)
-		file.Close()
-		if err != nil {
-			panic(err)
-		}
-
-		r := rects[i]
-		xdraw.CatmullRom.Scale(dst, r, src, src.Bounds(), draw.Over, nil)
 	}
 
 	outFile, err := os.Create("output.png")
